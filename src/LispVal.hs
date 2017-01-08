@@ -8,6 +8,7 @@ module LispVal where
 import qualified Data.Text as T
 import qualified Data.Map as Map
 import Control.Monad.Reader
+import Control.Monad.State
 
 {- 
  - here we have the standard LispVal S-Expression notation
@@ -28,7 +29,8 @@ data LispForm =   PrimAtom T.Text
                 | Lambda [LispForm] LispForm
                 | Apply LispForm [LispForm] 
                 | Let [LispForm] LispForm
-                | NullForm
+                | Define LispForm LispForm
+                | NullForm deriving (Show, Eq)
 
 
 
@@ -49,7 +51,49 @@ data LispForm =   PrimAtom T.Text
  -              PrimFun :: [LispVal] -> Eval LispVal, Map.Map T.Text LispVal
  -              fn = (params -> body) stack :: PrimFun
  -              evalFn  fn args
- -
+ -}
+
+{- Stack construction :: Proof of Concept -}
+
+data Stack = Stack { unS :: [LispForm] }
+newtype MStack a = MStack { unStack :: State Stack a } 
+  deriving (Functor, Applicative, Monad, MonadState Stack)
+
+emptyState :: MStack ()
+emptyState = put $ Stack []
+
+runStack :: Stack -> MStack () -> Stack
+runStack = flip (execState . unStack)
+
+
+fToStack :: LispForm -> MStack ()
+fToStack x@(PrimAtom _) = do
+  stk <- get
+  put $ formToStack x stk
+
+{- 
+ - (+ 1 2) 
+ - [lit 1, lit2, FUNCTION]
+ - (+ (+ 1 2) (+ 3 4))
+ - [lit 1, lit2, FUNCTION, lit1, lit2, FUNCTION, FUNCTION]
+ -}
+pushStack :: LispForm -> Stack -> Stack
+pushStack val (Stack stack) = Stack $ val : stack
+
+combStack :: Stack -> Stack -> Stack
+combStack (Stack s1) (Stack s2) = Stack $ s1 ++ s2
+
+
+formToStack :: LispForm -> Stack -> Stack
+formToStack x@(PrimAtom _) = pushStack x 
+formToStack x@(PrimInt _) = pushStack x 
+formToStack x@(PrimBool _) = pushStack x 
+formToStack x@(Define a b) = pushStack x 
+formToStack x@(Lambda args expr) = (\stack -> foldl1 combStack $ fmap ((flip formToStack) (formToStack expr stack)) args)
+
+
+
+ {-
  - evaluation strategy 3, a la oleg
  - typed tagless implementation:
  - GLambda
